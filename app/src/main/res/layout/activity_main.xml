@@ -1,0 +1,28 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    android:background="@drawable/background_gradient">
+
+    <Button
+        android:id="@+id/btnStartLockScreenService"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="16dp"
+        android:text="начать"
+        android:textColor="#FFFFFF"
+        android:background="@drawable/button_background"
+        android:layout_centerInParent="true"/>
+
+    <Button
+        android:id="@+id/btnSettings"
+        android:layout_width="102dp"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/btnStartLockScreenService"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/button_background"
+        android:text="настройки"
+        android:textColor="#FFFFFF" />
+</RelativeLayout>

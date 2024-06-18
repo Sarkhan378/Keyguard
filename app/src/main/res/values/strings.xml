@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">keyguard</string>
+    <string name="admin_receiver_description">Описание администратора устройства</string>
+    <string name="admin_receiver_label">Метка администратора устройства</string>
+</resources>

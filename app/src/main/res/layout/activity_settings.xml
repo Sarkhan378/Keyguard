@@ -1,0 +1,50 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/background_gradient"
+    android:padding="16dp">
+
+    <RadioGroup
+        android:id="@+id/radioGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:orientation="vertical"
+        android:layout_marginBottom="16dp">
+
+        <RadioButton
+            android:id="@+id/radioPin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PIN"
+            style="@style/RadioButtonStyle"/>
+
+        <RadioButton
+            android:id="@+id/radioPattern"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Графический ключ"
+            style="@style/RadioButtonStyle"/>
+    </RadioGroup>
+
+    <EditText
+        android:id="@+id/chatIdEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/radioGroup"
+        android:layout_marginTop="16dp"
+        android:hint="Telegram Chat ID"
+        android:padding="8dp"
+        android:background="@drawable/edit_text_background"/>
+
+    <Button
+        android:id="@+id/saveButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/chatIdEditText"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="16dp"
+        android:text="СОХРАНИТЬ"
+        android:textColor="#FFFFFF"
+        android:background="@drawable/button_background"/>
+</RelativeLayout>

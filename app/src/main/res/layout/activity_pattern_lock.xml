@@ -1,0 +1,35 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#EFEFEF"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tvPatternPrompt"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="24dp"
+        android:text="Нарисуйте паттерн"
+        android:textSize="18sp"
+        android:textColor="#333333"/>
+
+    <com.andrognito.patternlockview.PatternLockView
+        android:id="@+id/pattern_lock_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/tvPatternPrompt"
+        android:layout_marginTop="24dp"
+        app:dotCount="3"
+        app:dotNormalSize="15dp"
+        app:dotSelectedSize="30dp"
+        app:pathWidth="8dp"
+        app:normalStateColor="#888888"
+        app:correctStateColor="#0000FF"
+        app:wrongStateColor="#FF0000"
+        app:aspectRatioEnabled="true"
+        app:aspectRatio="square"
+        app:dotAnimationDuration="200"
+        app:pathEndAnimationDuration="100"/>
+</RelativeLayout>
